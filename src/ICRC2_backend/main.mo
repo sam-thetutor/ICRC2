@@ -1,415 +1,133 @@
-import Array "mo:base/Array";  //: This imports the Array module from the mo:base namespace. In Motoko, Array is a module providing functionality related to arrays.
-import Blob "mo:base/Blob"; // This imports the Blob module from the mo:base namespace. In Motoko, Blob typically represents binary data.
-import Buffer "mo:base/Buffer"; //This imports the Buffer module from the mo:base namespace. Buffers in Motoko are used for handling raw binary data efficiently.
-import Debug "mo:base/Debug";//This imports the Debug module from the mo:base namespace. It likely provides functionality for debugging purposes.
-import Error "mo:base/Error";//This imports the Error module from the mo:base namespace. The Error module would typically provide facilities for error handling. 
-import HashMap "mo:base/HashMap"; //This imports the HashMap module from the mo:base namespace. HashMap provides functionality for creating and manipulating hash maps.
-import Int "mo:base/Int";//This imports the Int module from the mo:base namespace. It likely provides utilities for working with integers.
-import Iter "mo:base/Iter";//This imports the Iter module from the mo:base namespace. It likely provides facilities for iterating over collections.
-import Nat64 "mo:base/Nat64";//This imports the Nat64 module from the mo:base namespace. It provides utilities for working with unsigned 64-bit integers.
-import Nat8 "mo:base/Nat8";// This imports the Nat8 module from the mo:base namespace. It provides utilities for working with unsigned 8-bit integers.
+import Array "mo:base/Array";
+import Blob "mo:base/Blob";
+import Buffer "mo:base/Buffer";
+import Principal "mo:base/Principal";
 import Option "mo:base/Option";
-import P "mo:base/Prelude";//The Prelude module typically contains fundamental definitions and functions available by default in Motoko
-import Principal "mo:base/Principal";//This imports the Principal module from the mo:base namespace. Principals are used for representing identities and permissions in Motoko.
-import Text "mo:base/Text";//This imports the Text module from the mo:base namespace. It provides utilities for working with text strings.
-import Time "mo:base/Time";// This imports the Time module from the mo:base namespace. It provides utilities for working with time and timestamps.
-import Bool "mo:base/Bool";//This imports the Bool module from the mo:base namespace. It provides utilities for working with boolean values.
-import Nat "mo:base/Nat";//This imports the Nat module from the mo:base namespace. It provides utilities for working with unsigned integers.
-import Timer "mo:base/Timer";//This imports the Timer module from the mo:base namespace. It likely provides functionality related to timing and scheduling.
-import Result "mo:base/Result";//This imports the Result module from the mo:base namespace. It provides utilities for working with computations that may fail.
-import Prim "mo:⛔";//This imports the Prim module. The ⛔ symbol is usually used for forbidden or unsafe operations in Motoko. This import might be used for accessing low-level operations that are typically not recommended.
+import Error "mo:base/Error";
+import Time "mo:base/Time";
+import Int "mo:base/Int";
+import Nat8 "mo:base/Nat8";
+import Nat64 "mo:base/Nat64";
 
-import Types "types/Types";//This imports the Types module from a local namespace. It likely contains custom data types and definitions specific to this project.
-import ICRC2Types "types/ICRC2Types";//This imports the ICRC2Types module from a local namespace. It likely contains custom data types and definitions specific to this project.
-import TextUtils "common/TextUtils";//This imports the TextUtils module from a local namespace. It likely contains utilities for working with text strings specific to this project.
-import ArrayUtils "common/ArrayUtils";//This imports the ArrayUtils module from a local namespace. It likely contains utilities for working with arrays specific to this project.
+actor class Ledger(init : { initial_mints : [{ account : { owner : Principal; subaccount : ?Blob }; amount : Nat }]; minting_account : { owner : Principal; subaccount : ?Blob }; token_name : Text; token_symbol : Text; decimals : Nat8; transfer_fee : Nat }) = this {
 
-actor class Ledger(
-  init : {
-    initial_mints : [{
-      account : {
-        owner : Principal;
-        subaccount : ?Blob;
-      };
-      amount : Nat;
-    }];
-    minting_account : { owner : Principal; subaccount : ?Blob };
-    token_name : Text;
-    token_symbol : Text;
-    decimals : Nat8;
-    transfer_fee : Nat;
-  }
-) = this {
+  public type Account = { owner : Principal; subaccount : ?Subaccount };
+  public type Subaccount = Blob;
+  public type Tokens = Nat;
+  public type Memo = Blob;
+  public type Timestamp = Nat64;
+  public type Duration = Nat64;
+  public type TxIndex = Nat;
+  public type TxLog = Buffer.Buffer<Transaction>;
 
-  public type Account = ICRC2Types.Account;
-  public type Subaccount = ICRC2Types.Subaccount;
-  public type Tokens = ICRC2Types.Tokens;
-  public type Memo = ICRC2Types.Memo;
-  public type Timestamp = ICRC2Types.Timestamp;
-  public type Duration = ICRC2Types.Duration;
-  public type TxIndex = ICRC2Types.TxIndex;
-  public type TxLog = ICRC2Types.TxLog;
-  public type Value = ICRC2Types.Value;
+  public type Value = { #Nat : Nat; #Int : Int; #Blob : Blob; #Text : Text };
 
-  public type TxKind = ICRC2Types.TxKind;
-  public type Transaction = ICRC2Types.Transaction;
-  public type Transfer = ICRC2Types.Transfer;
-  public type TransferError = ICRC2Types.TransferError;
-  public type TransferResult = ICRC2Types.TransferResult;
-  public type TransferFromArgs = ICRC2Types.TransferFromArgs;
-  public type TransferFromError = ICRC2Types.TransferFromError;
-  public type TransferFromResult = ICRC2Types.TransferFromResult;
-  public type ApproveArgs = ICRC2Types.ApproveArgs;
-  public type ApproveError = ICRC2Types.ApproveError;
-  public type ApproveResult = ICRC2Types.ApproveResult;
-  public type AllowanceArgs = ICRC2Types.AllowanceArgs;
-
-  public type UserBalance = Types.UserBalance;
-  public type UserBalanceResponse = Types.UserBalanceResponse;
-  public type ActiveStartRequest = Types.ActiveStartRequest;
-  public type MintConfigResponse = Types.MintConfigResponse;
-  public type MintStatisticsResponse = Types.MintStatisticsResponse;
-  public type GetAccountIdentifierTransactionsArgs = Types.GetAccountIdentifierTransactionsArgs;
-  public type GetAccountIdentifierTransactionsResult = Types.GetAccountIdentifierTransactionsResult;
-  public type GetBlocksArgs = Types.GetBlocksArgs;
-  public type QueryBlocksResponse = Types.QueryBlocksResponse;
-  public type QueryEncodedBlocksResponse = Types.QueryEncodedBlocksResponse;
-  public type GetAccountTransactionsArgs = Types.GetAccountTransactionsArgs;
-  public type TransactionWithId = Types.TransactionWithId;
-
+  let maxMemoSize = 32;
   let permittedDriftNanos : Duration = 60_000_000_000;
   let transactionWindowNanos : Duration = 24 * 60 * 60 * 1_000_000_000;
-  let defaultSubaccount : Subaccount = Blob.fromArrayMut(
-    Array.init(
-      32,
-      0 : Nat8,
-    )
-  );
+  let defaultSubaccount : Subaccount = Blob.fromArrayMut(Array.init(32, 0 : Nat8));
 
-  //Dynamically configurable parameters {"op":"mint","token":"icpi"}
-  // private stable var mint_memo : Text = "data:,{\"p\":\"icpi20\",\"op\":\"mint\",\"tick\":\"icpi\",\"amt\":\"100000000\"}";
-  private stable var mint_memo : Text = "{op:mint,token:icpi}";
-  private stable var mint_amount : Nat = 100000000;
-  private stable var max_mint_amount : Nat = 100000000;
-  private stable var start_block_time : Nat64 = 0;
-  private stable var end_block_time : Nat64 = 0;
-  private stable var last_block_time : Nat64 = 0;
-
-  //Results of automatic calculation of the contract
-  private stable var distribute_timer_id : Timer.TimerId = 0;
-  private stable var settle_timer_id : Timer.TimerId = 0;
-  private stable var get_last_block_time_id : Timer.TimerId = 0;
-  private stable var total_number_of_mint : Nat64 = 0;
-  private stable var end_of_settle : Bool = false;
-  private stable var end_of_distribute : Bool = false;
-  private stable var balance_stat : [(Text, UserBalance)] = [];
-  private var balance_map : HashMap.HashMap<Text, UserBalance> = HashMap.fromIter(balance_stat.vals(), 0, Text.equal, Text.hash);
-  private stable var register_stat : [(Text, Principal)] = [];
-  private var register_map : HashMap.HashMap<Text, Principal> = HashMap.fromIter(register_stat.vals(), 0, Text.equal, Text.hash);
-
-  private var tmp_balance_map = HashMap.HashMap<Text, UserBalance>(100, Text.equal, Text.hash);
-
-  public shared ({ caller }) func activity_start(request : ActiveStartRequest) : async Bool {
-    assert (init.minting_account.owner == caller);
-    mint_memo := Option.get(request.memo, mint_memo);
-    mint_amount := Option.get(request.amount, mint_amount);
-    max_mint_amount := Option.get(request.max_amount, max_mint_amount);
-    start_block_time := Option.get(request.start_block_time, start_block_time);
-    end_block_time := Option.get(request.end_block_time, end_block_time);
-    //Start the timing task
-    start_timing();
-    return true;
+  public type Operation = {
+    #Approve : Approve;
+    #Transfer : Transfer;
+    #Burn : Transfer;
+    #Mint : Transfer;
   };
 
-  func start_timing() {
-    distribute_timer_id := Timer.recurringTimer(#seconds(60), distribute);
-    settle_timer_id := Timer.recurringTimer(#seconds(300), settle);
-    get_last_block_time_id := Timer.recurringTimer(#seconds(60), get_last_block_time);
+  public type CommonFields = {
+    memo : ?Memo;
+    fee : ?Tokens;
+    created_at_time : ?Timestamp;
   };
 
-  public shared ({ caller }) func set_mint_memo(memo : Text) : async Bool {
-    assert (init.minting_account.owner == caller);
-    mint_memo := memo;
-    return true;
-  };
-  public shared ({ caller }) func set_mint_amount(amount : Nat) : async Bool {
-    assert (init.minting_account.owner == caller);
-    mint_amount := amount;
-    return true;
-  };
-  public shared ({ caller }) func set_end_block(block : Nat64) : async Bool {
-    assert (init.minting_account.owner == caller);
-    end_block_time := block;
-    return true;
+  public type Approve = CommonFields and {
+    from : Account;
+    spender : Account;
+    amount : Nat;
+    expires_at : ?Nat64;
   };
 
-  public query func query_mint_config() : async MintConfigResponse {
-    return {
-      memo = mint_memo;
-      amount = mint_amount;
-      start_block_time = start_block_time;
-      end_block_time = end_block_time;
-    };
-  };
-  public query func query_mint_statistics() : async MintStatisticsResponse {
-    return {
-      valid_addresses = balance_map.size();
-      valid_transactions = total_number_of_mint;
-      end_of_distribute = end_of_distribute;
-      end_of_settle = end_of_settle;
-    };
-  };
-  public query func query_user_valid_balance(principal : Principal) : async Nat {
-    let account_id = TextUtils.toAddress(principal);
-    switch (balance_map.get(account_id)) {
-      case (?balance) {
-        return balance.mint_amount;
-      };
-      case (_) {
-        return 0;
-      };
-    };
-  };
-  public query func query_users_valid_balance(offset : Nat, limit : Nat) : async Result.Result<Types.Page<UserBalanceResponse>, Text> {
-    var buffer : Buffer.Buffer<(UserBalanceResponse)> = Buffer.Buffer<(UserBalanceResponse)>(1);
-    for ((account_id, user_balance) in balance_map.entries()) {
-      let user_balance_response = {
-        account_id = user_balance.account_id;
-        principal = user_balance.principal;
-        mint_amount = user_balance.mint_amount;
-        distributed_amount = user_balance.distributed_amount;
-      };
-      buffer.add(user_balance_response);
-    };
-    return #ok({
-      totalElements = buffer.size();
-      content = ArrayUtils.bufferRange(buffer, offset, limit);
-      offset = offset;
-      limit = limit;
-    });
+  public type TransferSource = {
+    #Init;
+    #Icrc1Transfer;
+    #Icrc2TransferFrom;
   };
 
-  public shared ({ caller }) func register() : async Bool {
-    let account_id = TextUtils.toAddress(caller);
-    register_map.put(account_id, caller);
-    switch (balance_map.get(account_id)) {
-      case (?balance) {
-        balance.principal := ?caller;
-      };
-      case (_) {
-
-      };
-    };
-    return true;
+  public type Transfer = CommonFields and {
+    spender : Account;
+    source : TransferSource;
+    to : Account;
+    from : Account;
+    amount : Tokens;
   };
 
-  private func distribute() : async () {
-    if (end_of_distribute) {
-      ignore Timer.cancelTimer(distribute_timer_id);
-      ignore Timer.cancelTimer(get_last_block_time_id);
-      return;
-    };
-    if (end_block_time == 0 or (not end_of_settle)) {
-      //The activity is not over yet.
-      return;
-    };
-    //It can be distributed
-    let memo : Blob = Text.encodeUtf8(init.token_symbol # " Mint");
-    let now = Nat64.fromNat(Int.abs(Time.now()));
-    for ((account_id, balance) in balance_map.entries()) {
-      switch (register_map.get(account_id)) {
-        case (?principal) {
-          let to = { owner = principal; subaccount = null };
-          let tx : Transaction = {
-            args = {
-              from = init.minting_account;
-              to = to;
-              amount = balance.mint_amount - balance.distributed_amount;
-              fee = null;
-              memo = ?memo;
-              created_at_time = ?now;
-            };
-            kind = #Mint;
-            fee = 0;
-            timestamp = now;
-          };
-          log.add(tx);
-          balance.distributed_amount := balance.mint_amount;
-        };
-        case (_) {
+  public type Allowance = { allowance : Nat; expires_at : ?Nat64 };
 
-        };
-      };
-    };
-    end_of_distribute := true;
-
+  public type Transaction = {
+    operation : Operation;
+    // Effective fee for this transaction.
+    fee : Tokens;
+    timestamp : Timestamp;
   };
 
-  private func settle() : async () {
-    if (end_of_settle) {
-      ignore Timer.cancelTimer(settle_timer_id);
-      //The activity is over yet.
-      return;
-    };
-    tmp_balance_map := HashMap.HashMap<Text, UserBalance>(100, Text.equal, Text.hash);
-    let indexLedger = actor ("qhbym-qaaaa-aaaaa-aaafq-cai") : actor {
-      get_account_identifier_transactions : shared query GetAccountIdentifierTransactionsArgs -> async GetAccountIdentifierTransactionsResult;
-      get_account_transactions : shared query GetAccountTransactionsArgs -> async GetAccountIdentifierTransactionsResult;
-    };
-
-    var number_of_mints : Nat64 = 0;
-    var oldest_tx_id : Nat64 = 0;
-    var current_old_tx_id : Nat64 = 0;
-
-    let canister_principal = Principal.fromActor(this);
-    let canister_account_id = TextUtils.toAddress(canister_principal);
-
-    //Synchronize transaction data and obtain the final target transaction id
-    let args = buildRequestArgs(canister_account_id, null);
-    let transactionResult : GetAccountIdentifierTransactionsResult = await indexLedger.get_account_identifier_transactions(args);
-    let (ol_tx_id, current_ol_tx_id, total_mint_count) = checkTxIsCompliant(transactionResult, number_of_mints);
-    oldest_tx_id := ol_tx_id;
-    current_old_tx_id := current_ol_tx_id;
-    number_of_mints := total_mint_count;
-
-    //Synchronize all transaction data
-    while (current_old_tx_id > oldest_tx_id) {
-      let args = buildRequestArgs(canister_account_id, ?current_old_tx_id);
-      let transactionResult = await indexLedger.get_account_identifier_transactions(args);
-      let (ol_tx_id, current_ol_tx_id, total_mint_count) = checkTxIsCompliant(transactionResult, number_of_mints);
-      current_old_tx_id := current_ol_tx_id;
-      number_of_mints := total_mint_count;
-    };
-    total_number_of_mint := number_of_mints;
-    balance_map := tmp_balance_map;
-    if (end_block_time != 0 and last_block_time > end_block_time) {
-      end_of_settle := true;
-    };
-    return;
+  public type DeduplicationError = {
+    #TooOld;
+    #Duplicate : { duplicate_of : TxIndex };
+    #CreatedInFuture : { ledger_time : Timestamp };
   };
 
-  func get_last_block_time() : async () {
-    last_block_time := await get_block_time(0, 100);
+  public type CommonError = {
+    #InsufficientFunds : { balance : Tokens };
+    #BadFee : { expected_fee : Tokens };
+    #TemporarilyUnavailable;
+    #GenericError : { error_code : Nat; message : Text };
   };
 
-  func get_block_time(start : Nat64, count : Nat64) : async Nat64 {
-    if (count == 0) {
-      return 0;
-    };
-    let ledger = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai") : actor {
-      query_blocks : shared query GetBlocksArgs -> async QueryBlocksResponse;
-      query_encoded_blocks : shared query GetBlocksArgs -> async QueryEncodedBlocksResponse;
-    };
-
-    let getBlocksArgs : GetBlocksArgs = {
-      start = start;
-      length = 1;
-    };
-    let block_result = await ledger.query_blocks(getBlocksArgs);
-
-    if (block_result.blocks.size() == 0) {
-      if (start == 0) {
-        return await get_block_time(block_result.chain_length -5, count -1);
-      } else {
-        return await get_block_time(start, count -1);
-      };
-    };
-    return block_result.blocks[0].timestamp.timestamp_nanos;
+  public type TransferError = DeduplicationError or CommonError or {
+    #BadBurn : { min_burn_amount : Tokens };
   };
 
-  func buildRequestArgs(accountId : Text, startArg : ?Nat64) : GetAccountIdentifierTransactionsArgs {
-    let args : GetAccountIdentifierTransactionsArgs = {
-      max_results = 20000;
-      start = startArg;
-      account_identifier = accountId;
-    };
+  public type ApproveError = DeduplicationError or CommonError or {
+    #Expired : { ledger_time : Nat64 };
+    #AllowanceChanged : { current_allowance : Nat };
   };
 
-  func checkTxIsCompliant(transactionResult : GetAccountIdentifierTransactionsResult, count : Nat64) : (Nat64, Nat64, Nat64) {
-    var total_mint_conut = count;
-    var oldest_tx_id : Nat64 = 0;
-    var current_old_tx_id : Nat64 = 0;
-    switch (transactionResult) {
-      case (#Ok(result)) {
-        oldest_tx_id := Option.get(result.oldest_tx_id, oldest_tx_id);
-
-        let txs : [TransactionWithId] = result.transactions;
-
-        for (transaction : TransactionWithId in txs.vals()) {
-          current_old_tx_id := transaction.id;
-          let memo : Nat64 = transaction.transaction.memo;
-          let icrc1_memo : ?Blob = transaction.transaction.icrc1_memo;
-          switch (icrc1_memo) {
-            case (?icrc_memo) {
-              if (Option.get(Text.decodeUtf8(icrc_memo), "error") == mint_memo) {
-                total_mint_conut += 1;
-                switch (transaction.transaction.operation) {
-                  case (#Mint(mint_operation)) {};
-                  case (#Burn(burn_operation)) {};
-                  case (#Approve(approve_operation)) {};
-                  case (#Transfer(transfer_operation)) {
-                    updateUserBalance(transfer_operation.from);
-                  };
-                  case (#TransferFrom(transfer_from_operation)) {
-                    updateUserBalance(transfer_from_operation.from);
-                  };
-                };
-              };
-            };
-            case (_) {};
-          };
-        };
-      };
-      case (#Err(msg)) {
-
-      };
-    };
-    return (oldest_tx_id, current_old_tx_id, total_mint_conut);
+  public type TransferFromError = TransferError or {
+    #InsufficientAllowance : { allowance : Nat };
   };
 
-  func updateUserBalance(user_account_id : Text) {
-    switch (tmp_balance_map.get(user_account_id)) {
-      case (?balance) {
-        if (balance.mint_amount < max_mint_amount) {
-          balance.mint_amount += mint_amount;
-        };
-      };
-      case (_) {
-        var balance : UserBalance = {
-          account_id = user_account_id;
-          var principal = register_map.get(user_account_id);
-          var mint_amount = mint_amount;
-          var distributed_amount = 0;
-        };
-        tmp_balance_map.put(user_account_id, balance);
-      };
-    };
-  };
+  public type Result<T, E> = { #Ok : T; #Err : E };
 
   // Checks whether two accounts are semantically equal.
   func accountsEqual(lhs : Account, rhs : Account) : Bool {
     let lhsSubaccount = Option.get(lhs.subaccount, defaultSubaccount);
     let rhsSubaccount = Option.get(rhs.subaccount, defaultSubaccount);
 
-    Principal.equal(lhs.owner, rhs.owner) and Blob.equal(lhsSubaccount, rhsSubaccount);
+    Principal.equal(lhs.owner, rhs.owner) and Blob.equal(
+      lhsSubaccount,
+      rhsSubaccount,
+    );
   };
 
   // Computes the balance of the specified account.
   func balance(account : Account, log : TxLog) : Nat {
     var sum = 0;
     for (tx in log.vals()) {
-      switch (tx.kind) {
-        case (#Burn) {
-          if (accountsEqual(tx.args.from, account)) { sum -= tx.args.amount };
+      switch (tx.operation) {
+        case (#Burn(args)) {
+          if (accountsEqual(args.from, account)) { sum -= args.amount };
         };
-        case (#Mint) {
-          if (accountsEqual(tx.args.to, account)) { sum += tx.args.amount };
+        case (#Mint(args)) {
+          if (accountsEqual(args.to, account)) { sum += args.amount };
         };
-        case (#Transfer) {
-          if (accountsEqual(tx.args.from, account)) {
-            sum -= tx.args.amount + tx.fee;
+        case (#Transfer(args)) {
+          if (accountsEqual(args.from, account)) {
+            sum -= args.amount + tx.fee;
           };
-          if (accountsEqual(tx.args.to, account)) { sum += tx.args.amount };
+          if (accountsEqual(args.to, account)) { sum += args.amount };
+        };
+        case (#Approve(args)) {
+          if (accountsEqual(args.from, account)) { sum -= tx.fee };
         };
       };
     };
@@ -420,10 +138,11 @@ actor class Ledger(
   func totalSupply(log : TxLog) : Tokens {
     var total = 0;
     for (tx in log.vals()) {
-      switch (tx.kind) {
-        case (#Burn) { total -= tx.args.amount };
-        case (#Mint) { total += tx.args.amount };
-        case (#Transfer) { total -= tx.fee };
+      switch (tx.operation) {
+        case (#Burn(args)) { total -= args.amount };
+        case (#Mint(args)) { total += args.amount };
+        case (#Transfer(_)) { total -= tx.fee };
+        case (#Approve(_)) { total -= tx.fee };
       };
     };
     total;
@@ -433,10 +152,76 @@ actor class Ledger(
   func findTransfer(transfer : Transfer, log : TxLog) : ?TxIndex {
     var i = 0;
     for (tx in log.vals()) {
-      if (tx.args == transfer) { return ?i };
+      switch (tx.operation) {
+        case (#Burn(args)) { if (args == transfer) { return ?i } };
+        case (#Mint(args)) { if (args == transfer) { return ?i } };
+        case (#Transfer(args)) { if (args == transfer) { return ?i } };
+        case (_) {};
+      };
       i += 1;
     };
     null;
+  };
+
+  // Finds an approval in the transaction log.
+  func findApproval(approval : Approve, log : TxLog) : ?TxIndex {
+    var i = 0;
+    for (tx in log.vals()) {
+      switch (tx.operation) {
+        case (#Approve(args)) { if (args == approval) { return ?i } };
+        case (_) {};
+      };
+      i += 1;
+    };
+    null;
+  };
+
+  // Computes allowance of the spender for the specified account.
+  func allowance(account : Account, spender : Account, now : Nat64) : Allowance {
+    var i = 0;
+    var allowance : Nat = 0;
+    var lastApprovalTs : ?Nat64 = null;
+
+    for (tx in log.vals()) {
+      // Reset expired approvals, if any.
+      switch (lastApprovalTs) {
+        case (?expires_at) {
+          if (expires_at < tx.timestamp) {
+            allowance := 0;
+            lastApprovalTs := null;
+          };
+        };
+        case (null) {};
+      };
+      // Add pending approvals.
+      switch (tx.operation) {
+        case (#Approve(args)) {
+          if (args.from == account and args.spender == spender) {
+            allowance := args.amount;
+            lastApprovalTs := args.expires_at;
+          };
+        };
+        case (#Transfer(args)) {
+          if (args.from == account and args.spender == spender) {
+            assert (allowance > args.amount + tx.fee);
+            allowance -= args.amount + tx.fee;
+          };
+        };
+        case (_) {};
+      };
+    };
+
+    switch (lastApprovalTs) {
+      case (?expires_at) {
+        if (expires_at < now) { { allowance = 0; expires_at = null } } else {
+          {
+            allowance = Int.abs(allowance);
+            expires_at = ?expires_at;
+          };
+        };
+      };
+      case (null) { { allowance = allowance; expires_at = null } };
+    };
   };
 
   // Checks if the principal is anonymous.
@@ -453,15 +238,16 @@ actor class Ledger(
     for ({ account; amount } in Array.vals(init.initial_mints)) {
       validateSubaccount(account.subaccount);
       let tx : Transaction = {
-        args = {
+        operation = #Mint({
+          spender = init.minting_account;
+          source = #Init;
           from = init.minting_account;
           to = account;
           amount = amount;
           fee = null;
           memo = null;
           created_at_time = ?now;
-        };
-        kind = #Mint;
+        });
         fee = 0;
         timestamp = now;
       };
@@ -479,8 +265,22 @@ actor class Ledger(
   func validateMemo(m : ?Memo) {
     switch (m) {
       case (null) {};
-      case (?memo) { assert (memo.size() <= 32) };
+      case (?memo) { assert (memo.size() <= maxMemoSize) };
     };
+  };
+
+  func checkTxTime(created_at_time : ?Timestamp, now : Timestamp) : Result<(), DeduplicationError> {
+    let txTime : Timestamp = Option.get(created_at_time, now);
+
+    if ((txTime > now) and (txTime - now > permittedDriftNanos)) {
+      return #Err(#CreatedInFuture { ledger_time = now });
+    };
+
+    if ((txTime < now) and (now - txTime > transactionWindowNanos + permittedDriftNanos)) {
+      return #Err(#TooOld);
+    };
+
+    #Ok(());
   };
 
   // The list of all transactions.
@@ -490,6 +290,93 @@ actor class Ledger(
   // Used only during upgrades.
   stable var persistedLog : [Transaction] = [];
 
+  system func preupgrade() {
+    persistedLog := log.toArray();
+  };
+
+  system func postupgrade() {
+    log := Buffer.Buffer(persistedLog.size());
+    for (tx in Array.vals(persistedLog)) {
+      log.add(tx);
+    };
+  };
+
+  func recordTransaction(tx : Transaction) : TxIndex {
+    let idx = log.size();
+    log.add(tx);
+    idx;
+  };
+
+  func classifyTransfer(log : TxLog, transfer : Transfer) : Result<(Operation, Tokens), TransferError> {
+    let minter = init.minting_account;
+
+    if (Option.isSome(transfer.created_at_time)) {
+      switch (findTransfer(transfer, log)) {
+        case (?txid) { return #Err(#Duplicate { duplicate_of = txid }) };
+        case null {};
+      };
+    };
+
+    let result = if (accountsEqual(transfer.from, minter)) {
+      if (Option.get(transfer.fee, 0) != 0) {
+        return #Err(#BadFee { expected_fee = 0 });
+      };
+      (#Mint(transfer), 0);
+    } else if (accountsEqual(transfer.to, minter)) {
+      if (Option.get(transfer.fee, 0) != 0) {
+        return #Err(#BadFee { expected_fee = 0 });
+      };
+
+      if (transfer.amount < init.transfer_fee) {
+        return #Err(#BadBurn { min_burn_amount = init.transfer_fee });
+      };
+
+      let debitBalance = balance(transfer.from, log);
+      if (debitBalance < transfer.amount) {
+        return #Err(#InsufficientFunds { balance = debitBalance });
+      };
+
+      (#Burn(transfer), 0);
+    } else {
+      let effectiveFee = init.transfer_fee;
+      if (Option.get(transfer.fee, effectiveFee) != effectiveFee) {
+        return #Err(#BadFee { expected_fee = init.transfer_fee });
+      };
+
+      let debitBalance = balance(transfer.from, log);
+      if (debitBalance < transfer.amount + effectiveFee) {
+        return #Err(#InsufficientFunds { balance = debitBalance });
+      };
+
+      (#Transfer(transfer), effectiveFee);
+    };
+    #Ok(result);
+  };
+
+  func applyTransfer(args : Transfer) : Result<TxIndex, TransferError> {
+    validateSubaccount(args.from.subaccount);
+    validateSubaccount(args.to.subaccount);
+    validateMemo(args.memo);
+
+    let now = Nat64.fromNat(Int.abs(Time.now()));
+
+    switch (checkTxTime(args.created_at_time, now)) {
+      case (#Ok(_)) {};
+      case (#Err(e)) { return #Err(e) };
+    };
+
+    switch (classifyTransfer(log, args)) {
+      case (#Ok((operation, effectiveFee))) {
+        #Ok(recordTransaction({ operation = operation; fee = effectiveFee; timestamp = now }));
+      };
+      case (#Err(e)) { #Err(e) };
+    };
+  };
+
+  func overflowOk(x : Nat) : Nat {
+    x;
+  };
+
   public shared ({ caller }) func icrc1_transfer({
     from_subaccount : ?Subaccount;
     to : Account;
@@ -497,139 +384,23 @@ actor class Ledger(
     fee : ?Tokens;
     memo : ?Memo;
     created_at_time : ?Timestamp;
-  }) : async TransferResult {
-    if (isAnonymous(caller)) {
-      throw Error.reject("anonymous user is not allowed to transfer funds");
+  }) : async Result<TxIndex, TransferError> {
+
+
+    let from = {
+      owner = caller;
+      subaccount = from_subaccount;
     };
-    let now = Nat64.fromNat(Int.abs(Time.now()));
-
-    let txTime : Timestamp = Option.get(created_at_time, now);
-
-    if ((txTime > now) and (txTime - now > permittedDriftNanos)) {
-      return #Err(#CreatedInFuture { ledger_time = now });
-    };
-
-    if (
-      (
-        txTime < now
-      ) and (now - txTime > transactionWindowNanos + permittedDriftNanos)
-    ) {
-      return #Err(#TooOld);
-    };
-
-    validateSubaccount(from_subaccount);
-    validateSubaccount(to.subaccount);
-    validateMemo(memo);
-
-    let from = { owner = caller; subaccount = from_subaccount };
-
-    let args : Transfer = {
+    applyTransfer({
+      spender = from;
+      source = #Icrc1Transfer;
       from = from;
       to = to;
       amount = amount;
-      memo = memo;
       fee = fee;
+      memo = memo;
       created_at_time = created_at_time;
-    };
-
-    if (Option.isSome(created_at_time)) {
-      switch (findTransfer(args, log)) {
-        case (?height) { return #Err(#Duplicate { duplicate_of = height }) };
-        case null {};
-      };
-    };
-
-    let minter = init.minting_account;
-
-    let (kind, effectiveFee) = if (accountsEqual(from, minter)) {
-      if (Option.get(fee, 0) != 0) {
-        return #Err(#BadFee { expected_fee = 0 });
-      };
-      (#Mint, 0);
-    } else if (accountsEqual(to, minter)) {
-      if (Option.get(fee, 0) != 0) {
-        return #Err(#BadFee { expected_fee = 0 });
-      };
-
-      if (amount < init.transfer_fee) {
-        return #Err(#BadBurn { min_burn_amount = init.transfer_fee });
-      };
-
-      let debitBalance = balance(from, log);
-      if (debitBalance < amount) {
-        return #Err(#InsufficientFunds { balance = debitBalance });
-      };
-
-      (#Burn, 0);
-    } else {
-      let effectiveFee = init.transfer_fee;
-      if (Option.get(fee, effectiveFee) != effectiveFee) {
-        return #Err(#BadFee { expected_fee = init.transfer_fee });
-      };
-
-      let debitBalance = balance(from, log);
-      if (debitBalance < amount + effectiveFee) {
-        return #Err(#InsufficientFunds { balance = debitBalance });
-      };
-
-      (#Transfer, effectiveFee);
-    };
-
-    let tx : Transaction = {
-      args = args;
-      kind = kind;
-      fee = effectiveFee;
-      timestamp = now;
-    };
-
-    let txIndex = log.size();
-    log.add(tx);
-    #Ok(txIndex);
-  };
-
-  public type TransactionView = {
-    from : Text;
-    to : Text;
-    amount : Tokens;
-    kind : TxKind;
-    fee : Tokens;
-    timestamp : Timestamp;
-  };
-
-  public query func transaction(_offset : Nat, _limit : Nat) : async {
-    totalElements : Nat;
-    offset : Nat;
-    limit : Nat;
-    content : [TransactionView];
-  } {
-    var buffer : Buffer.Buffer<TransactionView> = Buffer.Buffer<TransactionView>(0);
-    let size : Nat = log.size();
-    var index : Nat = 0;
-    var i : Nat = size;
-    while (i > 0) {
-      i -= 1;
-      let tx : Transaction = log.get(i);
-      if (_limit == 0 or (index >= _offset and buffer.size() < _limit)) {
-        let txView : TransactionView = {
-          from = Principal.toText(tx.args.from.owner);
-          to = Principal.toText(tx.args.to.owner);
-          amount = tx.args.amount;
-          kind = tx.kind;
-          fee = tx.fee;
-          timestamp = tx.timestamp;
-        };
-        buffer.add(txView);
-      } else if (_limit > 0 and index >= _offset + _limit) {
-        i := 0;
-      };
-      index += 1;
-    };
-    {
-      totalElements = size;
-      offset = _offset;
-      limit = _limit;
-      content = buffer.toArray();
-    };
+    });
   };
 
   public query func icrc1_balance_of(account : Account) : async Tokens {
@@ -673,243 +444,156 @@ actor class Ledger(
     name : Text;
     url : Text;
   }] {
-    [{ name = "ICRC-2"; url = "https://github.com/dfinity/ICRC-1" }];
+    [
+      {
+        name = "ICRC-1";
+        url = "https://github.com/dfinity/ICRC-1/tree/main/standards/ICRC-1";
+      },
+      {
+        name = "ICRC-2";
+        url = "https://github.com/dfinity/ICRC-1/tree/main/standards/ICRC-2";
+      },
+    ];
   };
 
-  private stable var allowanceEntries : [(Principal, [(Principal, Nat)])] = [];
-  private var allowances = HashMap.HashMap<Principal, HashMap.HashMap<Principal, Nat>>(1, Principal.equal, Principal.hash);
+  public shared ({ caller }) func icrc2_approve({
+    from_subaccount : ?Subaccount;
+    spender : Account;
+    amount : Nat;
+    expires_at : ?Nat64;
+    expected_allowance : ?Nat;
+    memo : ?Memo;
+    fee : ?Tokens;
+    created_at_time : ?Timestamp;
+  }) : async Result<TxIndex, ApproveError> {
+    validateSubaccount(from_subaccount);
+    validateMemo(memo);
 
-  func unwrap<T>(x : ?T) : T = switch x {
-    case null { P.unreachable() };
-    case (?x_) { x_ };
-  };
+    let now = Nat64.fromNat(Int.abs(Time.now()));
 
-  func _allowance(owner : Principal, spender : Principal) : Nat {
-    switch (allowances.get(owner)) {
-      case (?allowance_owner) {
-        switch (allowance_owner.get(spender)) {
-          case (?allowance) { return allowance };
-          case (_) { return 0 };
+    switch (checkTxTime(created_at_time, now)) {
+      case (#Ok(_)) {};
+      case (#Err(e)) { return #Err(e) };
+    };
+
+    let approverAccount = { owner = caller; subaccount = from_subaccount };
+    let approval = {
+      from = approverAccount;
+      spender = spender;
+      amount = amount;
+      expires_at = expires_at;
+      fee = fee;
+      created_at_time = created_at_time;
+      memo = memo;
+    };
+
+    if (Option.isSome(created_at_time)) {
+      switch (findApproval(approval, log)) {
+        case (?txid) { return #Err(#Duplicate { duplicate_of = txid }) };
+        case (null) {};
+      };
+    };
+
+    switch (expires_at) {
+      case (?expires_at) {
+        if (expires_at < now) { return #Err(#Expired { ledger_time = now }) };
+      };
+      case (null) {};
+    };
+
+    let effectiveFee = init.transfer_fee;
+
+    if (Option.get(fee, effectiveFee) != effectiveFee) {
+      return #Err(#BadFee({ expected_fee = effectiveFee }));
+    };
+
+    switch (expected_allowance) {
+      case (?expected_allowance) {
+        let currentAllowance = allowance(approverAccount, spender, now);
+        if (currentAllowance.allowance != expected_allowance) {
+          return #Err(#AllowanceChanged({ current_allowance = currentAllowance.allowance }));
         };
       };
-      case (_) { return 0 };
+      case (null) {};
     };
+
+    let approverBalance = balance(approverAccount, log);
+    if (approverBalance < init.transfer_fee) {
+      return #Err(#InsufficientFunds { balance = approverBalance });
+    };
+
+    let txid = recordTransaction({
+      operation = #Approve(approval);
+      fee = effectiveFee;
+      timestamp = now;
+    });
+
+    assert (balance(approverAccount, log) == overflowOk(approverBalance - effectiveFee));
+
+    #Ok(txid);
   };
 
   public shared ({ caller }) func icrc2_transfer_from({
+    spender_subaccount : ?Subaccount;
     from : Account;
     to : Account;
     amount : Tokens;
     fee : ?Tokens;
     memo : ?Memo;
     created_at_time : ?Timestamp;
-  }) : async TransferFromResult {
-    if (isAnonymous(caller)) {
-      throw Error.reject("anonymous user is not allowed to transfer funds");
-    };
-    if (isAnonymous(from.owner)) {
-      throw Error.reject("anonymous user is not allowed to transfer funds");
-    };
-
-    let debitBalance = balance(from, log);
-    let _fee = switch (fee) {
-      case (?fee) { fee };
-      case (_) { 0 };
-    };
-    if (debitBalance < amount + _fee) {
-      return #Err(#InsufficientFunds { balance = debitBalance });
-    };
-    let allowed : Nat = _allowance(from.owner, caller);
-    if (allowed < amount + _fee) {
-      return #Err(#InsufficientAllowance { allowance = allowed });
-    };
-
-    let now = Nat64.fromNat(Int.abs(Time.now()));
-
-    let txTime : Timestamp = Option.get(created_at_time, now);
-
-    if ((txTime > now) and (txTime - now > permittedDriftNanos)) {
-      return #Err(#CreatedInFuture { ledger_time = now });
-    };
-
-    if (
-      (
-        txTime < now
-      ) and (now - txTime > transactionWindowNanos + permittedDriftNanos)
-    ) {
-      return #Err(#TooOld);
-    };
-
+  }) : async Result<TxIndex, TransferFromError> {
+    validateSubaccount(spender_subaccount);
     validateSubaccount(from.subaccount);
     validateSubaccount(to.subaccount);
     validateMemo(memo);
 
-    let args : Transfer = {
+    let spender = { owner = caller; subaccount = spender_subaccount };
+    let transfer : Transfer = {
+      spender = spender;
+      source = #Icrc2TransferFrom;
       from = from;
       to = to;
       amount = amount;
-      memo = memo;
       fee = fee;
+      memo = memo;
       created_at_time = created_at_time;
     };
 
-    if (Option.isSome(created_at_time)) {
-      switch (findTransfer(args, log)) {
-        case (?height) { return #Err(#Duplicate { duplicate_of = height }) };
-        case null {};
-      };
+    if (caller == from.owner) {
+      return applyTransfer(transfer);
     };
 
-    let minter = init.minting_account;
+    let now = Nat64.fromNat(Int.abs(Time.now()));
 
-    let (kind, effectiveFee) = if (accountsEqual(from, minter)) {
-      if (Option.get(fee, 0) != 0) {
-        return #Err(#BadFee { expected_fee = 0 });
-      };
-      (#Mint, 0);
-    } else if (accountsEqual(to, minter)) {
-      if (Option.get(fee, 0) != 0) {
-        return #Err(#BadFee { expected_fee = 0 });
-      };
-
-      if (amount < init.transfer_fee) {
-        return #Err(#BadBurn { min_burn_amount = init.transfer_fee });
-      };
-
-      if (debitBalance < amount) {
-        return #Err(#InsufficientFunds { balance = debitBalance });
-      };
-
-      (#Burn, 0);
-    } else {
-      let effectiveFee = init.transfer_fee;
-      if (Option.get(fee, effectiveFee) != effectiveFee) {
-        return #Err(#BadFee { expected_fee = init.transfer_fee });
-      };
-
-      let debitBalance = balance(from, log);
-      if (debitBalance < amount + effectiveFee) {
-        return #Err(#InsufficientFunds { balance = debitBalance });
-      };
-
-      (#Transfer, effectiveFee);
+    switch (checkTxTime(created_at_time, now)) {
+      case (#Ok(_)) {};
+      case (#Err(e)) { return #Err(e) };
     };
 
-    let allowed_new : Nat = allowed - amount - _fee;
-    if (allowed_new != 0) {
-      let allowance_from = unwrap(allowances.get(from.owner));
-      allowance_from.put(caller, allowed_new);
-      allowances.put(from.owner, allowance_from);
-    } else {
-      if (allowed != 0) {
-        let allowance_from = unwrap(allowances.get(from.owner));
-        allowance_from.delete(caller);
-        if (allowance_from.size() == 0) { allowances.delete(from.owner) } else {
-          allowances.put(from.owner, allowance_from);
-        };
-      };
+    let (operation, effectiveFee) = switch (classifyTransfer(log, transfer)) {
+      case (#Ok(result)) { result };
+      case (#Err(err)) { return #Err(err) };
     };
 
-    let tx : Transaction = {
-      args = args;
-      kind = kind;
+    let preTransferAllowance = allowance(from, spender, now);
+    if (preTransferAllowance.allowance < amount + effectiveFee) {
+      return #Err(#InsufficientAllowance { allowance = preTransferAllowance.allowance });
+    };
+
+    let txid = recordTransaction({
+      operation = operation;
       fee = effectiveFee;
       timestamp = now;
-    };
+    });
 
-    let txIndex = log.size();
-    log.add(tx);
-    #Ok(txIndex);
+    let postTransferAllowance = allowance(from, spender, now);
+    assert (postTransferAllowance.allowance == overflowOk(preTransferAllowance.allowance - (amount + effectiveFee)));
+
+    #Ok(txid);
   };
 
-  public shared ({ caller }) func icrc2_approve({
-    from_subaccount : ?Subaccount;
-    spender : Principal;
-    amount : Tokens;
-    fee : ?Tokens;
-    memo : ?Memo;
-    created_at_time : ?Timestamp;
-  }) : async ApproveResult {
-    if (isAnonymous(caller)) {
-      throw Error.reject("anonymous user is not allowed to transfer funds");
-    };
-
-    let from = { owner = caller; subaccount = from_subaccount };
-
-    let debitBalance = balance(from, log);
-    if (amount == 0 and Option.isSome(allowances.get(caller))) {
-      let allowance_caller = unwrap(allowances.get(caller));
-      allowance_caller.delete(spender);
-      if (allowance_caller.size() == 0) { allowances.delete(caller) } else {
-        allowances.put(caller, allowance_caller);
-      };
-    } else if (amount != 0 and Option.isNull(allowances.get(caller))) {
-      var temp = HashMap.HashMap<Principal, Nat>(
-        1,
-        Principal.equal,
-        Principal.hash,
-      );
-      temp.put(spender, amount);
-      allowances.put(caller, temp);
-    } else if (amount != 0 and Option.isSome(allowances.get(caller))) {
-      let allowance_caller = unwrap(allowances.get(caller));
-      allowance_caller.put(spender, amount);
-      allowances.put(caller, allowance_caller);
-    };
-    #Ok(amount);
-  };
-
-  public query func icrc2_allowance({
-    account : Account;
-    spender : Principal;
-  }) : async Tokens {
-    switch (allowances.get(account.owner)) {
-      case (?allowance_who) {
-        switch (allowance_who.get(spender)) {
-          case (?amount) { amount };
-          case (_) { 0 };
-        };
-      };
-      case (_) {
-        return 0;
-      };
-    };
-  };
-
-  system func preupgrade() {
-    balance_stat := Iter.toArray(balance_map.entries());
-    register_stat := Iter.toArray(register_map.entries());
-    persistedLog := log.toArray();
-    var size : Nat = allowances.size();
-    var temp : [var (Principal, [(Principal, Nat)])] = Array.init<(Principal, [(Principal, Nat)])>(
-      size,
-      (init.minting_account.owner, []),
-    );
-    size := 0;
-    for ((k, v) in allowances.entries()) {
-      temp[size] := (k, Iter.toArray(v.entries()));
-      size += 1;
-    };
-    allowanceEntries := Array.freeze(temp);
-  };
-
-  system func postupgrade() {
-    balance_stat := [];
-    register_stat := [];
-    log := Buffer.Buffer(persistedLog.size());
-    for (tx in Array.vals(persistedLog)) {
-      log.add(tx);
-    };
-    for ((k, v) in allowanceEntries.vals()) {
-      let allowed_temp = HashMap.fromIter<Principal, Nat>(
-        v.vals(),
-        1,
-        Principal.equal,
-        Principal.hash,
-      );
-      allowances.put(k, allowed_temp);
-    };
-    allowanceEntries := [];
+  public query func icrc2_allowance({ account : Account; spender : Account }) : async Allowance {
+    allowance(account, spender, Nat64.fromNat(Int.abs(Time.now())));
   };
 
 };
